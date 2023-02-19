@@ -20,6 +20,8 @@ local NUM_MIDDLE_IMAGES = #MIDDLE_TRANSPARENCIES
 local FADE_IN_OUT_BACKGROUND = true
 local FADE_IN_OUT_MAX_ALPHA = 0.35
 
+local SAFE_AREA_INSET_MAX = 100
+
 local FADE_IN_OUT_HALF_DURATION_DEFAULT = 0.3
 local FADE_IN_OUT_BALANCE_DEFAULT = 0.5
 local ThumbstickFadeTweenInfo = TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut)
@@ -30,6 +32,20 @@ local UserInputService = game:GetService("UserInputService")
 local ContextActionService = game:GetService("ContextActionService")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
+
+local FFlagUserDynamicThumbstickMoveOverButtons do
+	local success, result = pcall(function()
+		return UserSettings():IsUserFeatureEnabled("UserDynamicThumbstickMoveOverButtons")
+	end)
+	FFlagUserDynamicThumbstickMoveOverButtons = success and result
+end
+
+local FFlagUserDynamicThumbstickSafeAreaUpdate do
+	local success, result = pcall(function()
+		return UserSettings():IsUserFeatureEnabled("UserDynamicThumbstickSafeAreaUpdate")
+	end)
+	FFlagUserDynamicThumbstickSafeAreaUpdate = success and result
+end
 
 local LocalPlayer = Players.LocalPlayer
 if not LocalPlayer then
@@ -96,7 +112,12 @@ function DynamicThumbstick:Enable(enable: boolean?, uiParentFrame): boolean?
 
 		self:BindContextActions()
 	else
-		ContextActionService:UnbindAction(DYNAMIC_THUMBSTICK_ACTION_NAME)
+		if FFlagUserDynamicThumbstickMoveOverButtons then
+			self:UnbindContextActions()
+		else
+			ContextActionService:UnbindAction(DYNAMIC_THUMBSTICK_ACTION_NAME)
+		end
+
 		-- Disable
 		self:OnInputEnded() -- Cleanup
 	end
@@ -334,7 +355,11 @@ function DynamicThumbstick:BindContextActions()
 		if inputState == Enum.UserInputState.Begin then
 			return inputBegan(inputObject)
 		elseif inputState == Enum.UserInputState.Change then
-			return inputChanged(inputObject)
+			if FFlagUserDynamicThumbstickMoveOverButtons then
+				return Enum.ContextActionResult.Pass
+			else
+				return inputChanged(inputObject)
+			end
 		elseif inputState == Enum.UserInputState.End then
 			return inputEnded(inputObject)
 		elseif inputState == Enum.UserInputState.Cancel then
@@ -348,6 +373,20 @@ function DynamicThumbstick:BindContextActions()
 		false,
 		DYNAMIC_THUMBSTICK_ACTION_PRIORITY,
 		Enum.UserInputType.Touch)
+
+	if FFlagUserDynamicThumbstickMoveOverButtons then
+		self.TouchMovedCon = UserInputService.TouchMoved:Connect(function(inputObject: InputObject, _gameProcessedEvent: boolean)
+			inputChanged(inputObject)
+		end)
+	end
+end
+
+function DynamicThumbstick:UnbindContextActions()
+	ContextActionService:UnbindAction(DYNAMIC_THUMBSTICK_ACTION_NAME)
+
+	if self.TouchMovedCon then
+		self.TouchMovedCon:Disconnect()
+	end
 end
 
 function DynamicThumbstick:Create(parentFrame: GuiBase2d)
@@ -378,13 +417,14 @@ function DynamicThumbstick:Create(parentFrame: GuiBase2d)
 		self.radiusOfMaxSpeed = self.radiusOfMaxSpeed * 2
 	end
 
-	local function layoutThumbstickFrame(portraitMode)
+	local safeInset: number = if FFlagUserDynamicThumbstickSafeAreaUpdate then SAFE_AREA_INSET_MAX else 0
+	local function layoutThumbstickFrame(portraitMode: boolean)
 		if portraitMode then
-			self.thumbstickFrame.Size = UDim2.new(1, 0, 0.4, 0)
-			self.thumbstickFrame.Position = UDim2.new(0, 0, 0.6, 0)
+			self.thumbstickFrame.Size = UDim2.new(1, safeInset, 0.4, safeInset)
+			self.thumbstickFrame.Position = UDim2.new(0, -safeInset, 0.6, 0)
 		else
-			self.thumbstickFrame.Size = UDim2.new(0.4, 0, 2/3, 0)
-			self.thumbstickFrame.Position = UDim2.new(0, 0, 1/3, 0)
+			self.thumbstickFrame.Size = UDim2.new(0.4, safeInset, 2/3, safeInset)
+			self.thumbstickFrame.Position = UDim2.new(0, -safeInset, 1/3, 0)
 		end
 	end
 
@@ -406,7 +446,7 @@ function DynamicThumbstick:Create(parentFrame: GuiBase2d)
 	self.startImage.ImageRectSize = Vector2.new(144, 144)
 	self.startImage.ImageColor3 = Color3.new(0, 0, 0)
 	self.startImage.AnchorPoint = Vector2.new(0.5, 0.5)
-	self.startImage.Position = UDim2.new(0, self.thumbstickRingSize * 3.3, 1, -self.thumbstickRingSize  * 2.8)
+	self.startImage.Position = UDim2.new(0, self.thumbstickRingSize * 3.3 + safeInset, 1, -self.thumbstickRingSize * 2.8 - safeInset)
 	self.startImage.Size = UDim2.new(0, self.thumbstickRingSize  * 3.7, 0, self.thumbstickRingSize  * 3.7)
 	self.startImage.ZIndex = 10
 	self.startImage.Parent = self.thumbstickFrame
